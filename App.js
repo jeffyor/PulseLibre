@@ -141,6 +141,7 @@ const App = () => {
   const statusPollRef = useRef(null);
   const appStateRef = useRef(AppState.currentState);
   const disconnectSubscriptionRef = useRef(null);
+  const scanInProgressRef = useRef(false);
   const isReconnectingRef = useRef(false);
   const sessionStartRef = useRef(null);
 
@@ -397,67 +398,101 @@ const App = () => {
         Alert.alert('Permission Error', error.message, [{ text: 'OK' }]);
       }
     } else if (Platform.OS === 'ios') {
-      // CoreBluetooth is responsible for the native iOS Bluetooth prompt.
-      // react-native-permissions returns UNAVAILABLE without its separate
-      // Bluetooth permission pod, even when the OS permission is enabled.
-      const subscription = manager.onStateChange(state => {
+      // iOS CoreBluetooth owns permission prompts. Wait until it is ready.
+      try {
+        const state = await manager.state();
+        console.log('[BLE] startup state:', state);
         if (state === 'PoweredOn') {
-          subscription.remove();
           scanForDevices();
-        } else if (state === 'Unauthorized') {
-          subscription.remove();
-          Alert.alert(
-            'Bluetooth Access Required',
-            'Allow PulseLibre to use Bluetooth in iPhone Settings to connect to your Pulsetto.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Open Settings', onPress: () => openSettings() },
-            ],
-          );
-        } else if (state === 'Unsupported') {
-          subscription.remove();
-          Alert.alert('Bluetooth Unavailable', 'This device does not support Bluetooth LE.');
+          return;
         }
-      }, true);
+        if (state === 'Unauthorized') {
+          Alert.alert('Bluetooth Permission Required', 'Enable Bluetooth for PulseLibre in iPhone Settings > Privacy & Security > Bluetooth.', [
+            {text: 'Cancel', style: 'cancel'},
+            {text: 'Open Settings', onPress: () => openSettings()},
+          ]);
+          return;
+        }
+        if (state === 'Unsupported') {
+          Alert.alert('Bluetooth Initialization Error', 'The native BLE module reported Unsupported on this iPhone. This is an initialization or compatibility problem, not a lack of Bluetooth hardware.');
+          return;
+        }
+        let subscription;
+        subscription = manager.onStateChange(nextState => {
+          console.log('[BLE] startup state changed:', nextState);
+          if (nextState === 'PoweredOn') {
+            subscription?.remove();
+            scanForDevices();
+          } else if (nextState === 'Unauthorized' || nextState === 'Unsupported') {
+            subscription?.remove();
+            Alert.alert('Bluetooth Unavailable', 'iOS Bluetooth state: ' + nextState);
+          }
+        }, true);
+      } catch (error) {
+        console.error('[BLE] startup failed:', error);
+        Alert.alert('Bluetooth Initialization Error', String(error?.message || error));
+      }
     }
   };
 
-  // Scan for BLE devices
-  const scanForDevices = () => {
-    if (scanning || connectedDevice) {
-      console.log('Scan already in progress or device already connected.');
-      return;
+  // Scan only once iOS reports Bluetooth as ready. Keep a ref rather than
+  // relying on state captured in an asynchronous BLE callback.
+  const scanForDevices = async () => {
+    if (scanInProgressRef.current || connectedDevice) return;
+    scanInProgressRef.current = true;
+    try {
+      if (Platform.OS === 'ios') {
+        const state = await manager.state();
+        console.log('[BLE] before scan:', state);
+        if (state !== 'PoweredOn') {
+          const details = {
+            Unauthorized: 'Bluetooth access is denied. Open Settings and enable Bluetooth for PulseLibre.',
+            PoweredOff: 'Turn Bluetooth on in iPhone Settings.',
+            Unsupported: 'The native BLE module reported Unsupported on this iPhone. This suggests a native compatibility or initialization issue.',
+            Unknown: 'The native Bluetooth manager is still initializing. Retry in a moment.',
+            Resetting: 'iOS Bluetooth is resetting. Retry in a moment.',
+          };
+          Alert.alert('Bluetooth Not Ready', details[state] || ('iOS Bluetooth state: ' + state), [
+            {text: 'OK'},
+            ...(state === 'Unauthorized' ? [{text: 'Open Settings', onPress: () => openSettings()}] : []),
+          ]);
+          return;
+        }
+      }
+      console.log('[BLE] starting device scan');
+      setScanning(true);
+      manager.startDeviceScan(null, null, (error, device) => {
+        if (error) {
+          console.error('[BLE] scan failed:', error);
+          manager.stopDeviceScan();
+          scanInProgressRef.current = false;
+          setScanning(false);
+          Alert.alert('Scan Error', (error.message || 'Unknown error') + (error.errorCode ? ' (code ' + error.errorCode + ')' : ''));
+          return;
+        }
+        if (device?.name?.startsWith(DEVICE_NAME_PREFIX)) {
+          manager.stopDeviceScan();
+          scanInProgressRef.current = false;
+          setScanning(false);
+          connectToDevice(device);
+        }
+      });
+      setTimeout(() => {
+        if (scanInProgressRef.current) {
+          manager.stopDeviceScan();
+          scanInProgressRef.current = false;
+          setScanning(false);
+          Alert.alert('Scan Timeout', 'No Pulsetto device found. Please try again.');
+        }
+      }, 10000);
+    } catch (error) {
+      scanInProgressRef.current = false;
+      setScanning(false);
+      Alert.alert('Bluetooth Error', String(error?.message || error));
+    } finally {
+      // The scan callback/timeout owns the scan flag after startDeviceScan.
+      if (!scanning && !scanInProgressRef.current) setScanning(false);
     }
-
-    console.log('Starting device scan...');
-    setScanning(true);
-    manager.startDeviceScan(null, null, (error, device) => {
-      if (error) {
-        console.log('Scan error:', error);
-        setScanning(false);
-        Alert.alert('Scan Error', error.message || JSON.stringify(error), [{ text: 'OK' }]);
-        return;
-      }
-
-      if (device.name?.startsWith(DEVICE_NAME_PREFIX)) {
-        console.log('Found device:', device.name);
-        manager.stopDeviceScan();
-        setScanning(false);
-        connectToDevice(device);
-      }
-    });
-
-    // Set a timeout to stop scanning after 10 seconds
-    setTimeout(() => {
-      if (scanning) {
-        manager.stopDeviceScan();
-        setScanning(false);
-        console.log('Scanning timed out');
-        Alert.alert('Scan Timeout', 'No device found. Please try scanning again.', [
-          { text: 'OK' },
-        ]);
-      }
-    }, 10000); // 10 seconds
   };
 
   // Connect to the BLE device
