@@ -25,7 +25,7 @@ jobs:
       - name: Install CocoaPods
         run: |
           cd ios
-          pod install --repo-update
+          # The committed Podfile.lock pins React Native 0.76.5, while npm ci\n          # currently resolves 0.76.9. Re-resolve native pods to match node_modules.\n          rm -f Podfile.lock\n          rm -rf Pods\n          pod install --repo-update
       - name: Build unsigned device app
         shell: bash
         run: |
