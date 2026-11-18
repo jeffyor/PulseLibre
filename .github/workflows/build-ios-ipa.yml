@@ -77,6 +77,12 @@ jobs:
             build
           APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/PulseLibre.app"
           test -d "$APP"
+          echo "=== Verify packaged iOS Bluetooth privacy settings ==="
+          /usr/libexec/PlistBuddy -c 'Print :NSBluetoothAlwaysUsageDescription' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName' "$APP/Info.plist"
+          test -f "$APP/Assets.car"
           test -f "$APP/main.jsbundle" || { echo "Missing bundled JS"; exit 1; }
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
