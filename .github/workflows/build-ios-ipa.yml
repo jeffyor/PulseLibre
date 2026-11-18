@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/build-ios-ipa.yml'
       - 'ios/**'
+      - 'App.js'
       - 'package.json'
       - 'package-lock.json'
   workflow_dispatch:
@@ -22,6 +23,37 @@ jobs:
           cache: npm
       - name: Install JavaScript dependencies
         run: npm ci
+      - name: Generate iOS app icon
+        run: |
+          python3 - <<'PY'
+          import json, struct, zlib
+          from pathlib import Path
+          target = Path('ios/PulseLibre/Images.xcassets/AppIcon.appiconset')
+          target.mkdir(parents=True, exist_ok=True)
+          n = 1024
+          # Opaque indigo background and bold white pulse trace
+          pts = [(140,510),(328,510),(420,685),(514,310),(602,592),(670,466),(740,510),(885,510)]
+          raw = bytearray()
+          for y in range(n):
+              raw.append(0)
+              for x in range(n):
+                  d = min(
+                      ((x-(ax + max(0,min(1,((x-ax)*(bx-ax)+(y-ay)*(by-ay))/((bx-ax)**2+(by-ay)**2)))*(bx-ax)))**2 +
+                       (y-(ay + max(0,min(1,((x-ax)*(bx-ax)+(y-ay)*(by-ay))/((bx-ax)**2+(by-ay)**2)))*(by-ay)))**2)
+                      for (ax,ay),(bx,by) in zip(pts,pts[1:])
+                  )
+                  if d < 150:
+                      raw.extend((255,255,255,255))
+                  else:
+                      raw.extend((45,61,166,255))
+          def part(tag,data):
+              return struct.pack('>I',len(data))+tag+data+struct.pack('>I',zlib.crc32(tag+data)&0xffffffff)
+          png = b'\x89PNG\r\n\x1a\n'+part(b'IHDR',struct.pack('>IIBBBBB',n,n,8,6,0,0,0))+part(b'IDAT',zlib.compress(raw,6))+part(b'IEND',b'')
+          (target/'PulseLibre.png').write_bytes(png)
+          (target/'Contents.json').write_text(json.dumps({'images':[{'filename':'PulseLibre.png','idiom':'universal','platform':'ios','size':'1024x1024'}],'info':{'author':'xcode','version':1}}))
+          PY
+      - name: Verify icon
+        run: test -s ios/PulseLibre/Images.xcassets/AppIcon.appiconset/PulseLibre.png
       - name: Install CocoaPods
         run: |
           cd ios
