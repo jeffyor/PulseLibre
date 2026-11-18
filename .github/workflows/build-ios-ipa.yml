@@ -1,0 +1,54 @@
+name: Build unsigned iOS IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-ios-ipa.yml'
+      - 'ios/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install --repo-update
+      - name: Build unsigned device app
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace ios/PulseLibre.xcworkspace \
+            -scheme PulseLibre \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/PulseLibre.app"
+          test -d "$APP"
+          test -f "$APP/main.jsbundle" || { echo "Missing bundled JS"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          ( cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/PulseLibre-unsigned.ipa" Payload )
+          unzip -t "$GITHUB_WORKSPACE/PulseLibre-unsigned.ipa" | tail -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PulseLibre-unsigned-ipa
+          path: PulseLibre-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
