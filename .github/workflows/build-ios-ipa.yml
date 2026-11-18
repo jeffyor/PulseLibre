@@ -22,7 +22,12 @@ jobs:
           node-version: '20'
           cache: npm
       - name: Install JavaScript dependencies
-        run: npm ci
+        run: |
+          npm ci
+          # Slider 5.x requires Fabric / New Architecture and cannot compile
+          # with the legacy React Native bridge used for iOS BLE compatibility.
+          npm install --no-save --package-lock=false @react-native-community/slider@4.5.7
+          node -e "const v=require('./node_modules/@react-native-community/slider/package.json').version; if(v!=='4.5.7') throw Error('Wrong slider version: '+v)"
       - name: Generate iOS app icon
         run: |
           python3 - <<'PY'
