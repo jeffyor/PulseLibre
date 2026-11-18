@@ -397,31 +397,28 @@ const App = () => {
         Alert.alert('Permission Error', error.message, [{ text: 'OK' }]);
       }
     } else if (Platform.OS === 'ios') {
-      // Handle iOS permissions
-      try {
-        const status = await check(PERMISSIONS.IOS.BLUETOOTH_PERIPHERAL);
-
-        if (status !== RESULTS.GRANTED) {
-          const newStatus = await request(PERMISSIONS.IOS.BLUETOOTH_PERIPHERAL);
-          if (newStatus === RESULTS.GRANTED) {
-            scanForDevices();
-          } else {
-            Alert.alert(
-              'Permissions Required',
-              'Bluetooth permission is required for scanning.',
-              [
-                { text: 'Grant Permissions', onPress: () => requestBluetoothPermissions() },
-                { text: 'Open Settings', onPress: () => openSettings(), style: 'cancel' },
-              ]
-            );
-          }
-        } else {
+      // CoreBluetooth is responsible for the native iOS Bluetooth prompt.
+      // react-native-permissions returns UNAVAILABLE without its separate
+      // Bluetooth permission pod, even when the OS permission is enabled.
+      const subscription = manager.onStateChange(state => {
+        if (state === 'PoweredOn') {
+          subscription.remove();
           scanForDevices();
+        } else if (state === 'Unauthorized') {
+          subscription.remove();
+          Alert.alert(
+            'Bluetooth Access Required',
+            'Allow PulseLibre to use Bluetooth in iPhone Settings to connect to your Pulsetto.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => openSettings() },
+            ],
+          );
+        } else if (state === 'Unsupported') {
+          subscription.remove();
+          Alert.alert('Bluetooth Unavailable', 'This device does not support Bluetooth LE.');
         }
-      } catch (error) {
-        console.error('Permission request error:', error);
-        Alert.alert('Permission Error', error.message, [{ text: 'OK' }]);
-      }
+      }, true);
     }
   };
 
